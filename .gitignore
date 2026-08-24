@@ -1,0 +1,24 @@
+# Output di build STM32CubeIDE (CM7/, CM4/, e qualunque altra configurazione)
+Debug/
+Release/
+
+# Oggetti e file generati dal toolchain GCC ARM
+*.o
+*.d
+*.su
+*.cyclo
+*.list
+*.map
+*.elf
+*.bin
+*.hex
+*.launch
+
+# Metadata locali dell'IDE / workspace Eclipse (non del progetto)
+.metadata/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
