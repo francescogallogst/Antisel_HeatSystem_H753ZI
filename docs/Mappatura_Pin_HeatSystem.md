@@ -12,7 +12,7 @@ gira su questo MCU single-core.
 | MAX31865 DRDY | **PE5** | EXTI5, fronte **discesa**, pull-up esterno (open-drain) | Data-ready (letto per polling in `MAX31865_DataReady()`, non collegato a un ISR) |
 | MAX31865 SCK | **PB10** | SPI2_SCK, AF5 | |
 | MAX31865 MISO | **PC2_C** | SPI2_MISO, AF5 | |
-| MAX31865 MOSI | **PC3_C** | SPI2_MOSI, AF5 | SPI2: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (~1.5 MHz con SYSCLK 480 MHz) |
+| MAX31865 MOSI | **PC3_C** | SPI2_MOSI, AF5 | SPI2: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (3.125 MBit/s, da CubeMX) |
 | Heater PWM | **PA6** | TIM3_CH1, AF2 | Pilota lo stadio di potenza (MOSFET/SSR — tipo ancora TBD, §7 proposta) verso le resistenze |
 
 ## Rete
