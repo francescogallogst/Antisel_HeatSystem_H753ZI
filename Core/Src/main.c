@@ -26,7 +26,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "max31865.h"
 #include "heater_ctrl.h"
 #include "rtu_protocol.h"
 /* USER CODE END Includes */
@@ -104,7 +103,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_IWDG1_Init();
   MX_TIM3_Init();
   MX_LWIP_Init();
   MX_SPI3_Init();
@@ -112,6 +110,12 @@ int main(void)
   BSP_LED_Init(LED_GREEN);
   Heater_Init();
   RTU_Init();
+
+  /* IWDG1 avviato qui, dopo tutte le init lente (LWIP/BSP): se partisse
+   * prima di MX_LWIP_Init() il timeout (~2s) puo' scadere durante
+   * l'autonegoziazione del PHY Ethernet, causando un reset loop
+   * (vedi docs/Mappatura_Pin_HeatSystem.md). */
+  MX_IWDG1_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */

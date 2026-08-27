@@ -61,8 +61,6 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define MAX31865_CS_Pin GPIO_PIN_4
 #define MAX31865_CS_GPIO_Port GPIOE
-#define MAX31865_DRDY_Pin GPIO_PIN_5
-#define MAX31865_DRDY_GPIO_Port GPIOE
 
 /* USER CODE BEGIN Private defines */
 

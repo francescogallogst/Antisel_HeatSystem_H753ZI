@@ -6,10 +6,17 @@ gira su questo MCU single-core.
 
 ## Segnali applicativi
 
+> ⚠️ Il sensore montato è un **Adafruit MAX31856** (termocoppia Tipo T), non
+> un MAX31865 (RTD): protocollo/registri dei due chip sono incompatibili
+> (driver in `max31856.c/.h`). I nomi dei segnali/define sotto sono
+> l'etichetta ereditata da CubeMX (assegnata quando il progetto usava ancora
+> il MAX31865) e non sono stati rinominati per non dover ripassare da una
+> rigenerazione `.ioc`; il pinout fisico (SPI3 su PB3/PB4/PB5, CS su PE4) è
+> comunque invariato e valido anche per il MAX31856.
+
 | Segnale | Pin STM32 | Periferica / config | Ruolo |
 |---|---|---|---|
-| MAX31865 CS | **PE4** | GPIO output PP, riposo **HIGH** (attivo basso) | Chip select SPI del driver RTD |
-| MAX31865 DRDY | **PE5** | EXTI5, fronte **discesa**, pull-up esterno (open-drain) | Data-ready (letto per polling in `MAX31865_DataReady()`, non collegato a un ISR) |
+| MAX31865 CS | **PE4** | GPIO output PP, riposo **HIGH** (attivo basso) | Chip select SPI del driver termocoppia |
 | MAX31865 SCK | **PB3** | SPI3_SCK, AF6 | Pin condiviso con JTDO/TRACESWO (JTAG) — libero perché il progetto non configura il debug in modalità JTAG (SWD standard a 2 fili) |
 | MAX31865 MISO | **PB4** | SPI3_MISO, AF6 | Pin condiviso con NJTRST (JTAG) — libero per lo stesso motivo di cui sopra |
 | MAX31865 MOSI | **PB5** | SPI3_MOSI, AF7 | SPI3: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (3.125 MBit/s, da CubeMX). Sostituisce la precedente mappatura su SPI2 (PB10/PC2_C/PC3_C) per evitare i pin "_C" (switch analogico) e il LED LD3 (PB14) |
@@ -57,7 +64,6 @@ gira su questo MCU single-core.
 | Segnale | Define (`Core/Inc/main.h`) |
 |---|---|
 | MAX31865 CS | `MAX31865_CS_Pin` / `MAX31865_CS_GPIO_Port` |
-| MAX31865 DRDY | `MAX31865_DRDY_Pin` / `MAX31865_DRDY_GPIO_Port` |
 
 ## Ancora da assegnare (non presente in questa scheda)
 

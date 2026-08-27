@@ -7,7 +7,7 @@
 #include "heater_ctrl.h"
 #include "main.h"
 #include "tim.h"
-#include "max31865.h"
+#include "max31856.h"
 
 /* Guadagni PID, soglia di cutoff e timeout watchdog: valori di partenza
  * prudenti, NON tarati (Proposta_HeatSystem_RTU_PID.md §7, decisioni
@@ -62,7 +62,7 @@ static void write_duty(float pct) {
 }
 
 void Heater_Init(void) {
-  MAX31865_Init();
+  MAX31856_Init();
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   write_duty(0.0f); /* riscaldatore spento finche' non arriva un comando */
   mode = HEATER_OFF;
@@ -76,14 +76,14 @@ static void enter_fault(void) {
   pid_integral = 0.0f;
 }
 
-/* Safety check indipendente dal PID: fault MAX31865, T oltre cutoff, o
- * lettura RTD stantia -> forza PWM a 0% e latcha fault. Stessa filosofia
+/* Safety check indipendente dal PID: fault MAX31856, T oltre cutoff, o
+ * lettura stantia -> forza PWM a 0% e latcha fault. Stessa filosofia
  * della protezione INA301 R-01 di AntiSEL: sicurezza locale al dispositivo,
  * non dipendente dalla GUI/rete. */
 static bool safety_check(void) {
-  MAX31865_Fault_t fault;
-  if (MAX31865_ReadFaultStatus(&fault) && fault.raw != 0U) {
-    MAX31865_ClearFault();
+  MAX31856_Fault_t fault;
+  if (MAX31856_ReadFaultStatus(&fault) && fault.raw != 0U) {
+    MAX31856_ClearFault();
     enter_fault();
     return false;
   }
@@ -105,10 +105,9 @@ static void poll_rtd(void) {
   }
   last_rtd_tick = now;
 
-  uint16_t code;
-  if (MAX31865_ReadRtd(&code)) {
-    float ohms = MAX31865_CodeToOhms(code);
-    latest_temp_c = MAX31865_OhmsToCelsius(ohms);
+  float temp_c;
+  if (MAX31856_ReadTempC(&temp_c)) {
+    latest_temp_c = temp_c;
     last_rtd_ok_tick = now;
     rtd_ever_ok = true;
   }
