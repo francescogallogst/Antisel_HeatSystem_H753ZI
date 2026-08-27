@@ -1,7 +1,7 @@
 /**
  ******************************************************************************
  * @file    heater_ctrl.c
- * @brief   Controllo riscaldatore: PID + PWM (TIM3_CH1) + sicurezza locale.
+ * @brief   Controllo riscaldatore: PID + PWM (TIM4_CH4) + sicurezza locale.
  ******************************************************************************
  */
 #include "heater_ctrl.h"
@@ -51,19 +51,19 @@ static void write_duty(float pct) {
     pct = 100.0f;
   }
   duty_pct = pct;
-  uint32_t period = htim3.Init.Period; /* es. 65535 */
+  uint32_t period = htim4.Init.Period; /* es. 65535 */
   uint32_t counts = (uint32_t)((pct / 100.0f) * (float)period);
   /* clamp esplicito: CCR e' un registro a 16 bit, un valore di 'period+1'
    * (100% "esatto") lo farebbe traboccare a 0, cioe' 0% invece di 100% */
   if (counts > period) {
     counts = period;
   }
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, counts);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, counts);
 }
 
 void Heater_Init(void) {
   MAX31856_Init();
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   write_duty(0.0f); /* riscaldatore spento finche' non arriva un comando */
   mode = HEATER_OFF;
   last_command_tick = HAL_GetTick();

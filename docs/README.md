@@ -1,8 +1,11 @@
 # Antisel_HeatSystem — panoramica
 
 Firmware del dispositivo RTU/PID Heat System descritto in
-`AntiSEL/docs/Proposta_HeatSystem_RTU_PID.md`: legge un **MAX31865** (RTD)
-e pilota in **PWM proporzionale** delle resistenze di riscaldamento,
+`AntiSEL/docs/Proposta_HeatSystem_RTU_PID.md`: legge un **MAX31856**
+(termocoppia Tipo T — non più il MAX31865/RTD della proposta originale,
+protocollo/registri incompatibili tra i due chip, v.
+[Mappatura_Pin_HeatSystem.md](Mappatura_Pin_HeatSystem.md)) e pilota in
+**PWM proporzionale** delle resistenze di riscaldamento,
 esponendo un protocollo TCP testuale su `192.168.1.101:7756` verso il
 pannello "PID CTRL + RTU" di `AntiSel_GUI/antisel_dashboard_eth.py`.
 
@@ -22,8 +25,8 @@ suo firmware. Tutta la logica gira su questo MCU single-core.
 
 | Modulo | Ruolo |
 |---|---|
-| `max31865.c/h` | Driver RTD via SPI2: init, lettura codice/temperatura, fault |
-| `heater_ctrl.c/h` | PID, scrittura PWM (TIM3_CH1), safety check locale, watchdog di disconnessione, modi OFF/MANUAL/AUTO/FAULT |
+| `max31856.c/h` | Driver termocoppia via SPI1 (CN7): init, lettura temperatura linearizzata, fault (incluso open-circuit), diagnostica bring-up (`GET RAW`/`GET GPIO`/`TEST SCK`) |
+| `heater_ctrl.c/h` | PID, scrittura PWM (TIM4_CH4), safety check locale, watchdog di disconnessione, modi OFF/MANUAL/AUTO/FAULT |
 | `rtu_protocol.c/h` | Server TCP raw LwIP sulla porta 7756, dispatch comandi |
 
 ## Log del bring-up
@@ -68,10 +71,23 @@ Problemi reali trovati e corretti durante la messa in funzione su hardware
    MAX31865. Aggiunto un flag esplicito "letto almeno una volta".
 10. **Aggiunta LED di stato**: Abilitato il LED verde (LD1) come heartbeat per certificare visivamente il corretto funzionamento del main loop (lampeggia ogni 500 ms).
 11. **Pulizia build**: Eliminati file temporanei non necessari e risolti i warning per garantire una compilazione completamente pulita.
+12. **Migrazione MAX31865→MAX31856 e SPI3→SPI1**: sostituito il chip (RTD→
+    termocoppia, protocollo/registri incompatibili). Il primo remap SPI3 su
+    PC10/PC11/PC12 (per evitare i pin JTAG storici su PB3/4/5) non ha
+    risolto un problema di comunicazione persistente (scritture di
+    registro mai stabili, SCK fermo a livello alto anche forzando il
+    toggle via GPIO puro bypassando il periferico — diagnosticato con i
+    comandi `GET RAW`/`GET GPIO`/`TEST SCK` aggiunti apposta). **Fix**:
+    migrato tutto su **SPI1/CN7** (PA5/PA6/PB5), connettore ZIO nativo per
+    SPI su questa board secondo il datasheet ufficiale. Il PWM del
+    riscaldatore, che occupava PA6 (ora SPI1_MISO), è stato spostato da
+    TIM3_CH1 a **TIM4_CH4/PD15**. Aggiornato anche il `.ioc` per allineare
+    una eventuale rigenerazione CubeMX (le modifiche sono fuori dai blocchi
+    `USER CODE`).
 
 ## Parametri non tarati (placeholder — §7 della proposta)
 
 Vedi tabella in [RTU_PID_Protocollo.md](RTU_PID_Protocollo.md#parametri-ancora-da-tarare-7-della-proposta):
-guadagni PID, soglia di cutoff termico, timeout watchdog, wiring RTD
-(2/3/4 fili), tipo di stadio di potenza (MOSFET vs SSR) e relativa
-frequenza PWM di TIM3 (attualmente ai default CubeMX, ~3.7 kHz).
+guadagni PID, soglia di cutoff termico, timeout watchdog, tipo di
+termocoppia/filtro rete, tipo di stadio di potenza (MOSFET vs SSR) e
+relativa frequenza PWM di TIM4 (attualmente ai default CubeMX, ~3.7 kHz).

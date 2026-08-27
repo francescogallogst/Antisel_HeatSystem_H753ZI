@@ -59,8 +59,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define MAX31856_CS_Pin GPIO_PIN_4
-#define MAX31856_CS_GPIO_Port GPIOE
+#define MAX31856_CS_Pin GPIO_PIN_14
+#define MAX31856_CS_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
 

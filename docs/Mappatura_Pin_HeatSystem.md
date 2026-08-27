@@ -4,23 +4,54 @@ Scheda **fisicamente separata** dal Nucleo AntiSEL (192.168.1.100, porta
 7755) — vedi `AntiSEL/docs/Proposta_HeatSystem_RTU_PID.md`. Tutta la logica
 gira su questo MCU single-core.
 
+> ⚠️ **Chip aggiornato**: l'hardware montato è un **MAX31856** (termocoppia
+> Tipo T, Adafruit) e **non** un MAX31865 (RTD) come indicato in una
+> versione precedente di questa scheda — protocollo/registri dei due chip
+> sono incompatibili. Il driver firmware è `Core/Src/max31856.c` /
+> `Core/Inc/max31856.h`.
+>
+> ⚠️ **Storico SPI3/PC10-12 abbandonato**: la mappatura precedente
+> (SPI3 su PC10/PC11/PC12, connettore CN8) mostrava scritture di registro
+> "scivolate" su un indirizzo adiacente durante `MAX31856_Init()`
+> (es. il valore atteso in CR1 ritrovato in MASK), e diagnostica hardware
+> approfondita (comandi `GET RAW`/`GET GPIO`/`TEST SCK` aggiunti per il
+> bring-up) ha mostrato SCK fermo a livello alto invece che al riposo
+> basso atteso (CPOL=0) anche forzando il toggle via GPIO puro — sintomo
+> di un problema sul periferico/pin SPI3 stesso, non risolto dal
+> ricablaggio CN7→CN8. **Migrato a SPI1 sul connettore ZIO CN7**
+> (Table 18 del datasheet ufficiale, `docs/um2407-...pdf`), che espone
+> SCK/MISO/MOSI in modo nativo senza passare da AF alternativi condivisi
+> con JTAG o SDMMC. Il CS, inizialmente lasciato su PE4 (**CN9**, non CN7
+> — vedi nota precedente sulla correzione di questo riferimento), è stato
+> **spostato anch'esso su CN7** (PD14, pin `SPI_A_CS` nativo) dopo aver
+> misurato PE4 fermo a 0V esternamente nonostante il firmware lo leggesse
+> `HIGH` — vedi dettaglio nella tabella sotto. **Richiede ricablaggio
+> fisico** del modulo MAX31856 da CN8/CN9 interamente a CN7.
+>
+> ⚠️ **Conflitto risolto con Heater PWM**: MISO di SPI1 è **PA6**, lo
+> stesso pin fisico che era assegnato a `Heater PWM` (`TIM3_CH1`, CN7
+> `D12`). Il PWM del riscaldatore è stato spostato su **TIM4_CH4/PD15**
+> (anch'esso su CN7, `D9`) per liberare PA6.
+>
+> Vedi anche il fix "read-back + retry" in `MAX31856_Init()`, mantenuto
+> come mitigazione software indipendente.
+>
+> ⚠️ **Da aggiornare anche nel `.ioc`**: queste modifiche sono state
+> fatte a mano in `spi.c`/`tim.c`/`heater_ctrl.c`/`main.c`, fuori dai
+> blocchi `USER CODE`. Se in futuro si rigenera il codice da CubeMX senza
+> aver prima allineato il pinout nel `.ioc` (SPI1 su PA5/PA6/PB5, TIM4_CH4
+> su PD15), la rigenerazione sovrascrive questi file e si torna alla
+> vecchia mappatura SPI3/TIM3.
+
 ## Segnali applicativi
 
-> ⚠️ Il sensore montato è un **Adafruit MAX31856** (termocoppia Tipo T), non
-> un MAX31865 (RTD): protocollo/registri dei due chip sono incompatibili
-> (driver in `max31856.c/.h`). I nomi dei segnali/define sotto sono
-> l'etichetta ereditata da CubeMX (assegnata quando il progetto usava ancora
-> il MAX31865) e non sono stati rinominati per non dover ripassare da una
-> rigenerazione `.ioc`; il pinout fisico (SPI3 su PB3/PB4/PB5, CS su PE4) è
-> comunque invariato e valido anche per il MAX31856.
-
-| Segnale | Pin STM32 | Periferica / config | Ruolo |
-|---|---|---|---|
-| MAX31865 CS | **PE4** | GPIO output PP, riposo **HIGH** (attivo basso) | Chip select SPI del driver termocoppia |
-| MAX31865 SCK | **PB3** | SPI3_SCK, AF6 | Pin condiviso con JTDO/TRACESWO (JTAG) — libero perché il progetto non configura il debug in modalità JTAG (SWD standard a 2 fili) |
-| MAX31865 MISO | **PB4** | SPI3_MISO, AF6 | Pin condiviso con NJTRST (JTAG) — libero per lo stesso motivo di cui sopra |
-| MAX31865 MOSI | **PB5** | SPI3_MOSI, AF7 | SPI3: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (3.125 MBit/s, da CubeMX). Sostituisce la precedente mappatura su SPI2 (PB10/PC2_C/PC3_C) per evitare i pin "_C" (switch analogico) e il LED LD3 (PB14) |
-| Heater PWM | **PA6** | TIM3_CH1, AF2 | Pilota lo stadio di potenza (MOSFET/SSR — tipo ancora TBD, §7 proposta) verso le resistenze |
+| Segnale | Pin STM32 | Connettore | Periferica / config | Ruolo |
+|---|---|---|---|---|
+| MAX31856 CS | **PD14** | CN7 (pin 16, `D10`) | GPIO output PP, riposo **HIGH** (attivo basso) | Chip select SPI del driver termocoppia. Spostato da PE4 (CN9 pin 16, poi da un tentativo intermedio su PE2/CN9 pin 14): PE4 misurava ripetutamente 0V esternamente nonostante il firmware leggesse `HIGH` via `GET GPIO`, con catena di misura validata (3V3 letto correttamente sullo stesso setup) — sospetta rottura del collegamento fisico su quella linea dopo il ricablaggio SPI1/CN7, non confermabile da remoto. **PD14 è il pin `SPI_A_CS` nativo di CN7** (Table 18 del datasheet) — non usato in hardware come NSS (CS resta gestito via software, `SPI_NSS_SOFT`), ma sceglierlo consolida tutti e 4 i segnali SPI (SCK/MISO/MOSI/CS) sullo stesso connettore, evitando salti tra CN7 e CN9. Nessun conflitto con TIM4_CH4 (PD15, Heater PWM): PD14 sarebbe TIM4_CH3, canale non usato. **Fix storico**: il livello di uscita iniziale nel `.ioc`/`gpio.c` era rimasto `GPIO_PIN_RESET` (LOW) dalla vecchia mappatura RTD, tenendo il CS asserito dal boot fino alla prima `cs_high()` in `MAX31856_Init()` — durante la finestra di `MX_LWIP_Init()` (autonegoziazione PHY, anche secondi). Corretto a `GPIO_PIN_SET` (HIGH) |
+| MAX31856 SCK | **PA5** | CN7 (pin 10, `D13`) | SPI1_SCK, AF5 | Migrato da PC10/SPI3 (CN8) — vedi nota sopra |
+| MAX31856 MISO | **PA6** | CN7 (pin 12, `D12`) | SPI1_MISO, AF5 | Migrato da PC11/SPI3. Libera PA6 dal precedente uso come Heater PWM (spostato su TIM4_CH4/PD15) |
+| MAX31856 MOSI | **PB5** | CN7 (pin 14, `D11`) | SPI1_MOSI, AF5 | Migrato da PC12/SPI3. SPI1: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64, stesso clock kernel SPI123 via PLL già usato per SPI3 |
+| Heater PWM | **PD15** | CN7 (pin 18, `D9`) | TIM4_CH4, AF2 | Pilota lo stadio di potenza (MOSFET/SSR — tipo ancora TBD, §7 proposta) verso le resistenze. Avviato in `Heater_Init()` (`HAL_TIM_PWM_Start`), duty scritto via `__HAL_TIM_SET_COMPARE`. Spostato da PA6/TIM3_CH1 per il conflitto con SPI1_MISO |
 
 ## Rete
 
@@ -63,7 +94,7 @@ gira su questo MCU single-core.
 
 | Segnale | Define (`Core/Inc/main.h`) |
 |---|---|
-| MAX31865 CS | `MAX31865_CS_Pin` / `MAX31865_CS_GPIO_Port` |
+| MAX31856 CS | `MAX31856_CS_Pin` / `MAX31856_CS_GPIO_Port` (rinominato oggi da `MAX31865_CS_*`) |
 
 ## Ancora da assegnare (non presente in questa scheda)
 

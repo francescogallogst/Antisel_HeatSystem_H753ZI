@@ -26,7 +26,11 @@ Implementato in `Core/Src/rtu_protocol.c`.
 |---|---|---|---|
 | `GET TEMP` | — | `OK TEMP=<°C, 1 decimale>` | `ERR RTD_STALE` se nessuna lettura RTD valida negli ultimi `rtd_stale_ms` (default 2000 ms, vedi `heater_ctrl.h`) |
 | `GET PID` | — | `OK PID PWM=<%, 1 decimale> STATE=<OFF\|MANUAL\|AUTO\|FAULT>` | |
-| `SET SETPOINT_C <v>` | setpoint [°C] | `OK SETPOINT_C=<v>` | Porta il controllore in modo **AUTO** e resetta il timestamp del watchdog di disconnessione |
+| `SET SETPOINT_C <v>` | setpoint [°C] | `OK SETPOINT_C=<v>` | Porta il controllore in modo **AUTO** e resetta il timestamp del watchdog di disconnessione. Se lo stato torna subito a `FAULT` al successivo `GET PID`, il comando è stato accettato ma `safety_check()` lo ha rilatchato nello stesso ciclo — il guasto sottostante (MAX31856) è ancora presente |
+| `ACK FAULT` | — | `OK ACK STATE=<OFF\|FAULT>` | Esce da `FAULT` verso `OFF` **solo se** la condizione di guasto non si ripresenta al `safety_check()` successivo; altrimenti la risposta stessa può già mostrare `STATE=FAULT` |
+| `GET RAW` | — | `OK RAW CR0=<hex> CR1=<hex> MASK=<hex> SR=<hex> LTCB=<hex,3 byte> SPI_OK=<0\|1>` | Dump diagnostico dei registri MAX31856 via SPI1. `SPI_OK` indica solo che le transazioni HAL non hanno avuto timeout, **non** che i dati siano elettricamente validi |
+| `GET GPIO` | — | `OK GPIO CS=<0\|1> SCK=<0\|1> MISO=<0\|1> MOSI=<0\|1>` | Livello elettrico istantaneo (IDR) dei 4 pin, letto senza toccare la configurazione SPI1 — utile per verificare il bus senza strumenti esterni |
+| `TEST SCK` | — | `OK TEST_SCK_START` poi (dopo ~2 s) `OK TEST_SCK_DONE` | **Bloccante**: scavalca SPI1 e pilota SCK (PA5) come GPIO in toggle a ~500 Hz per bring-up con oscilloscopio, poi ripristina AF5/SPI1. Sospende `Heater_Service()` per 2 s (refresh IWDG incluso nel ciclo) |
 | altro | — | `ERR UNKNOWN` | |
 
 La GUI interroga `GET TEMP` e `GET PID` ogni `RTU_POLL_S` (1.0 s, definito
@@ -40,16 +44,18 @@ pannello RTU/PID.
 | `OFF` | Riscaldatore spento, nessun comando attivo |
 | `MANUAL` | Duty impostato manualmente (non ancora raggiungibile dal protocollo attuale — riservato per estensioni future) |
 | `AUTO` | PID attivo, insegue `SETPOINT_C` |
-| `FAULT` | Safety check ha rilevato un problema (fault MAX31865, sovratemperatura, RTD stantia) — PWM forzato a 0%, resta in FAULT finché non arriva un `ACK FAULT` (comando non ancora esposto via rete, vedi §7 sotto) |
+| `FAULT` | Safety check ha rilevato un problema (fault MAX31856, sovratemperatura, RTD stantia) — PWM forzato a 0%, resta in FAULT finché non arriva un `ACK FAULT` |
 
 ## Sicurezza locale (indipendente dal protocollo)
 
 Implementata in `heater_ctrl.c`, non richiede comandi dalla GUI:
 
-- **Safety check** ad ogni ciclo: se il MAX31865 segnala un fault, se la
-  temperatura supera `cutoff_c` (default 90.0 °C, placeholder), o se la
-  lettura RTD è stantia, il PWM viene forzato a 0% e lo stato passa a
-  `FAULT`.
+- **Safety check** ad ogni ciclo: se il MAX31856 segnala un fault (incluso
+  open-circuit, rilevamento attivato via `OCFAULT[1:0]` in `cr0_byte()`),
+  se la temperatura supera `cutoff_c` (default 90.0 °C, placeholder), o se
+  la lettura RTD è stantia, il PWM viene forzato a 0% e lo stato passa a
+  `FAULT`. `ACK FAULT` riporta a `OFF` solo se nessuna di queste condizioni
+  è più vera al ciclo successivo.
 - **Watchdog di disconnessione**: se in modo `AUTO` non arriva nessun
   comando (`SET SETPOINT_C`) entro `watchdog_ms` (default 5000 ms,
   placeholder) il riscaldatore torna a `OFF` da solo, senza bisogno di un
@@ -60,10 +66,9 @@ Implementata in `heater_ctrl.c`, non richiede comandi dalla GUI:
 Come da proposta §5.3, il protocollo è pensato per essere esteso restando
 compatibile col parsing esistente:
 
-- `ACK FAULT` — uscita esplicita dallo stato FAULT (funzione
-  `Heater_AckFault()` già presente nel driver, non ancora esposta via TCP)
 - `SET MODE <OFF|MANUAL|AUTO>` — cambio modo esplicito
-- `GET FAULT` — dettaglio bit di fault MAX31865
+- `GET FAULT` — dettaglio bit di fault MAX31856 già decodificati
+  (`MAX31856_Fault_t`), oggi ricavabili solo indirettamente da `GET RAW`
 
 ## Parametri ancora da tarare (§7 della proposta)
 
@@ -76,4 +81,4 @@ reale — vedi i commenti in `heater_ctrl.c`:
 | Soglia di cutoff termico | 90.0 °C | `heater_ctrl.c`, `cal.cutoff_c` |
 | Timeout watchdog disconnessione | 5000 ms | `heater_ctrl.c`, `cal.watchdog_ms` |
 | Staleness RTD | 2000 ms | `heater_ctrl.c`, `cal.rtd_stale_ms` |
-| Wiring RTD | 3 fili, PT100, R_REF=430 Ω | `max31865.c`, `cal` |
+| Termocoppia | Tipo T, filtro rete 50/60 Hz configurabile | `max31856.c`, `cal` |

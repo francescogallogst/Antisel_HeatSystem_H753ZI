@@ -1,7 +1,7 @@
 /**
  ******************************************************************************
  * @file    max31856.h
- * @brief   Driver MAX31856 (termocoppia-to-digital) — interfaccia SPI3.
+ * @brief   Driver MAX31856 (termocoppia-to-digital) — interfaccia SPI1 (CN7).
  *          Sostituisce max31865.h: l'hardware montato (Adafruit MAX31856,
  *          termocoppia Tipo T) non e' un MAX31865 (RTD), protocollo/registri
  *          incompatibili tra i due chip.
@@ -72,5 +72,35 @@ typedef struct {
 } MAX31856_RawDump_t;
 
 bool MAX31856_ReadRaw(MAX31856_RawDump_t *out);
+
+typedef struct {
+  bool cs;
+  bool sck;
+  bool miso;
+  bool mosi;
+} MAX31856_GpioLevels_t;
+
+/* Legge il livello elettrico istantaneo dei 4 pin (IDR, valido anche in AF)
+ * senza toccare la configurazione — nessun impatto su SPI1/watchdog. */
+void MAX31856_ReadGpioLevels(MAX31856_GpioLevels_t *out);
+
+/* Diagnostica bring-up: scavalca il periferico SPI1 e pilota PA5 (SCK)
+ * come GPIO in toggle per ~2 s, poi ripristina la funzione AF5 SPI1.
+ * Bloccante — da usare solo per verifica manuale con oscilloscopio,
+ * non nel normale funzionamento (sospende Heater_Service() per 2 s). */
+void MAX31856_TestSckToggle(void);
+
+/* Come MAX31856_TestSckToggle ma su MOSI (PB5): toggle GPIO puro per ~2s,
+ * bypass completo di SPI1, per verificare se il pin fisico e' in grado di
+ * produrre un segnale osservabile indipendentemente dal periferico. */
+void MAX31856_TestMosiToggle(void);
+
+/* Diagnostica bring-up: pilota MOSI (PB5) a livelli noti bypassando SPI1 e
+ * legge MISO (PA6) in parallelo, senza toccarne la config. Se MISO segue
+ * sempre il livello forzato su MOSI, e' un corto/crosstalk sul cablaggio;
+ * se resta indipendente, il chip non sta rispondendo affatto. Ritorna il
+ * numero di campioni su MATCH_TOTAL in cui MISO == livello forzato. */
+#define MAX31856_LOOPBACK_SAMPLES 10U
+uint32_t MAX31856_TestLoopback(void);
 
 #endif /* MAX31856_H */

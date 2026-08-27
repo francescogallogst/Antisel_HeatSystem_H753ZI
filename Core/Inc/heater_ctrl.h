@@ -1,7 +1,7 @@
 /**
  ******************************************************************************
  * @file    heater_ctrl.h
- * @brief   Controllo riscaldatore: PID + PWM (TIM3_CH1) + sicurezza locale.
+ * @brief   Controllo riscaldatore: PID + PWM (TIM4_CH4) + sicurezza locale.
  *          Proposta_HeatSystem_RTU_PID.md §5.2.
  ******************************************************************************
  */

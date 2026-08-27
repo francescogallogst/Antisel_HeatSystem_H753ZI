@@ -77,6 +77,37 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
     return;
   }
 
+  if (strncmp(line, "GET GPIO", 8) == 0) {
+    MAX31856_GpioLevels_t lvl;
+    MAX31856_ReadGpioLevels(&lvl);
+    snprintf(buf, sizeof(buf), "OK GPIO CS=%d SCK=%d MISO=%d MOSI=%d\r\n",
+             (int)lvl.cs, (int)lvl.sck, (int)lvl.miso, (int)lvl.mosi);
+    send_str(tpcb, buf);
+    return;
+  }
+
+  if (strncmp(line, "TEST SCK", 8) == 0) {
+    send_str(tpcb, "OK TEST_SCK_START\r\n");
+    MAX31856_TestSckToggle(); /* bloccante ~2 s, solo per bring-up manuale */
+    send_str(tpcb, "OK TEST_SCK_DONE\r\n");
+    return;
+  }
+
+  if (strncmp(line, "TEST MOSI", 9) == 0) {
+    send_str(tpcb, "OK TEST_MOSI_START\r\n");
+    MAX31856_TestMosiToggle();
+    send_str(tpcb, "OK TEST_MOSI_DONE\r\n");
+    return;
+  }
+
+  if (strncmp(line, "TEST LOOP", 9) == 0) {
+    uint32_t matches = MAX31856_TestLoopback();
+    snprintf(buf, sizeof(buf), "OK LOOP MATCH=%lu/%u\r\n",
+             (unsigned long)matches, MAX31856_LOOPBACK_SAMPLES);
+    send_str(tpcb, buf);
+    return;
+  }
+
   if (strncmp(line, "ACK FAULT", 9) == 0) {
     Heater_AckFault();
     snprintf(buf, sizeof(buf), "OK ACK STATE=%s\r\n", Heater_ModeName(Heater_GetMode()));
