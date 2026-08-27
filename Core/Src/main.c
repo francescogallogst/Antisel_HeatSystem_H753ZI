@@ -96,7 +96,7 @@ int main(void)
   /* USER CODE END Init */
 
   /* Configure the system clock */
-  SystemClock_Config();
+  SystemClock_Config_480MHz();
 
   /* USER CODE BEGIN SysInit */
 
@@ -107,7 +107,7 @@ int main(void)
   MX_IWDG1_Init();
   MX_TIM3_Init();
   MX_LWIP_Init();
-  MX_SPI2_Init();
+  MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
   BSP_LED_Init(LED_GREEN);
   Heater_Init();

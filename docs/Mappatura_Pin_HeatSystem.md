@@ -10,9 +10,9 @@ gira su questo MCU single-core.
 |---|---|---|---|
 | MAX31865 CS | **PE4** | GPIO output PP, riposo **HIGH** (attivo basso) | Chip select SPI del driver RTD |
 | MAX31865 DRDY | **PE5** | EXTI5, fronte **discesa**, pull-up esterno (open-drain) | Data-ready (letto per polling in `MAX31865_DataReady()`, non collegato a un ISR) |
-| MAX31865 SCK | **PB10** | SPI2_SCK, AF5 | |
-| MAX31865 MISO | **PC2_C** | SPI2_MISO, AF5 | |
-| MAX31865 MOSI | **PC3_C** | SPI2_MOSI, AF5 | SPI2: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (3.125 MBit/s, da CubeMX) |
+| MAX31865 SCK | **PB3** | SPI3_SCK, AF6 | Pin condiviso con JTDO/TRACESWO (JTAG) — libero perché il progetto non configura il debug in modalità JTAG (SWD standard a 2 fili) |
+| MAX31865 MISO | **PB4** | SPI3_MISO, AF6 | Pin condiviso con NJTRST (JTAG) — libero per lo stesso motivo di cui sopra |
+| MAX31865 MOSI | **PB5** | SPI3_MOSI, AF7 | SPI3: 8 bit, mode 1 (CPOL=0/CPHA=1), prescaler /64 (3.125 MBit/s, da CubeMX). Sostituisce la precedente mappatura su SPI2 (PB10/PC2_C/PC3_C) per evitare i pin "_C" (switch analogico) e il LED LD3 (PB14) |
 | Heater PWM | **PA6** | TIM3_CH1, AF2 | Pilota lo stadio di potenza (MOSFET/SSR — tipo ancora TBD, §7 proposta) verso le resistenze |
 
 ## Rete
@@ -33,6 +33,17 @@ gira su questo MCU single-core.
 | AHB | 240 MHz |
 | APBx | 120 MHz |
 | Funzione | `SystemClock_Config_480MHz()` in `Core/Src/main.c`, chiamata al posto della `SystemClock_Config()` generata — stesso schema già usato in AntiSEL |
+| Alimentazione core | `PWR_LDO_SUPPLY` (non SMPS) — la NUCLEO-H753ZI non è popolata per l'alimentazione diretta da SMPS |
+
+> ⚠️ **Trappola ad ogni rigenerazione CubeMX**: la chiamata a
+> `SystemClock_Config_480MHz()` in `main()` sta fuori dai blocchi
+> `USER CODE`, quindi CubeMX la sovrascrive sempre con la
+> `SystemClock_Config()` di default ad ogni "Generate Code" — va
+> ripristinata a mano dopo ogni rigenerazione. `RCC.SupplySource` è
+> invece salvato correttamente nel `.ioc` come `PWR_LDO_SUPPLY` (fix
+> applicato in data odierna, prima riportava erroneamente
+> `PWR_DIRECT_SMPS_SUPPLY`), quindi la `SystemClock_Config()` generata
+> di default ora eredita già il valore giusto.
 
 ## Periferiche di supporto
 

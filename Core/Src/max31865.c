@@ -83,7 +83,7 @@ static bool write_reg(uint8_t addr, uint8_t data) {
   uint8_t tx[2] = {(uint8_t)(0x80U | addr), data};
   cs_low();
   HAL_StatusTypeDef st =
-      HAL_SPI_Transmit(&hspi2, tx, sizeof(tx), MAX31865_SPI_TIMEOUT_MS);
+      HAL_SPI_Transmit(&hspi3, tx, sizeof(tx), MAX31865_SPI_TIMEOUT_MS);
   cs_high();
   return st == HAL_OK;
 }
@@ -92,9 +92,9 @@ static bool read_regs(uint8_t addr, uint8_t *buf, uint16_t len) {
   uint8_t tx = (uint8_t)(addr & 0x7FU);
   cs_low();
   HAL_StatusTypeDef st =
-      HAL_SPI_Transmit(&hspi2, &tx, 1U, MAX31865_SPI_TIMEOUT_MS);
+      HAL_SPI_Transmit(&hspi3, &tx, 1U, MAX31865_SPI_TIMEOUT_MS);
   if (st == HAL_OK) {
-    st = HAL_SPI_Receive(&hspi2, buf, len, MAX31865_SPI_TIMEOUT_MS);
+    st = HAL_SPI_Receive(&hspi3, buf, len, MAX31865_SPI_TIMEOUT_MS);
   }
   cs_high();
   return st == HAL_OK;
