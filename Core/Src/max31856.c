@@ -36,14 +36,13 @@ void MAX31856_SetCal(const MAX31856_Cal_t *c) {
 const MAX31856_Cal_t *MAX31856_GetCal(void) { return &cal; }
 
 /* ── Interfaccia hardware ───────────────────────────────────────────────── */
-/* CS sul pin PE4 (etichetta CubeMX ereditata dal driver RTD precedente,
- * vedi docs/Mappatura_Pin_HeatSystem.md). */
+/* CS sul pin PE4. */
 static void cs_low(void) {
-  HAL_GPIO_WritePin(MAX31865_CS_GPIO_Port, MAX31865_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(MAX31856_CS_GPIO_Port, MAX31856_CS_Pin, GPIO_PIN_RESET);
 }
 
 static void cs_high(void) {
-  HAL_GPIO_WritePin(MAX31865_CS_GPIO_Port, MAX31865_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(MAX31856_CS_GPIO_Port, MAX31856_CS_Pin, GPIO_PIN_SET);
 }
 
 static bool write_reg(uint8_t addr, uint8_t data) {
@@ -75,13 +74,34 @@ static uint8_t cr0_byte(void) {
   return cr0;
 }
 
+#define MAX31856_INIT_RETRIES 5U
+
+/* Scrive un registro e verifica con una rilettura; ritenta in caso di
+ * mismatch. Osservato in campo (GET RAW) che una delle tre scritture
+ * consecutive di MAX31856_Init() puo' "scivolare" su un registro adiacente
+ * (es. il valore atteso in CR1 ritrovato in MASK) — sintomo di un glitch
+ * elettrico/di timing sul bus SPI3, non di un bug nella sequenza logica.
+ * HAL_Delay(1) fra un tentativo e l'altro per lasciar assestare il bus. */
+static bool write_reg_verified(uint8_t addr, uint8_t data) {
+  for (uint32_t attempt = 0U; attempt < MAX31856_INIT_RETRIES; attempt++) {
+    uint8_t readback = 0xFFU;
+    if (write_reg(addr, data) && read_regs(addr, &readback, 1U) &&
+        readback == data) {
+      return true;
+    }
+    HAL_Delay(1U);
+  }
+  return false;
+}
+
 bool MAX31856_Init(void) {
   cs_high();
-  bool ok = write_reg(REG_CR0, cr0_byte());
+  HAL_Delay(1U); /* dwell minimo prima della prima transazione */
+  bool ok = write_reg_verified(REG_CR0, cr0_byte());
   /* CR1: averaging a 1 campione (bit7:4 = 0) + selezione tipo termocoppia */
-  ok = write_reg(REG_CR1, (uint8_t)(cal.tc_type & 0x0FU)) && ok;
+  ok = write_reg_verified(REG_CR1, (uint8_t)(cal.tc_type & 0x0FU)) && ok;
   /* Smaschera tutti i fault nel registro SR (default di reset li maschera) */
-  ok = write_reg(REG_MASK, 0x00U) && ok;
+  ok = write_reg_verified(REG_MASK, 0x00U) && ok;
   return ok;
 }
 
@@ -122,4 +142,17 @@ bool MAX31856_ReadFaultStatus(MAX31856_Fault_t *fault_out) {
 
 bool MAX31856_ClearFault(void) {
   return write_reg(REG_CR0, cr0_byte() | CR0_FAULT_CLEAR);
+}
+
+bool MAX31856_ReadRaw(MAX31856_RawDump_t *out) {
+  if (out == NULL) {
+    return false;
+  }
+  bool ok = read_regs(REG_CR0, &out->cr0, 1U);
+  ok = read_regs(REG_CR1, &out->cr1, 1U) && ok;
+  ok = read_regs(REG_MASK, &out->mask, 1U) && ok;
+  ok = read_regs(REG_SR, &out->sr, 1U) && ok;
+  ok = read_regs(REG_LTCBH, out->ltcb, sizeof(out->ltcb)) && ok;
+  out->ok = ok;
+  return ok;
 }

@@ -9,6 +9,7 @@
  */
 #include "rtu_protocol.h"
 #include "heater_ctrl.h"
+#include "max31856.h"
 #include "main.h"
 #include "lwip/tcp.h"
 #include <stdio.h>
@@ -61,6 +62,24 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
     int s_i = (int)sp;
     int s_f = (int)(((sp - (float)s_i) * 10.0f));
     snprintf(buf, sizeof(buf), "OK SETPOINT_C=%d.%d\r\n", s_i, s_f);
+    send_str(tpcb, buf);
+    return;
+  }
+
+  if (strncmp(line, "GET RAW", 7) == 0) {
+    MAX31856_RawDump_t raw;
+    MAX31856_ReadRaw(&raw);
+    snprintf(buf, sizeof(buf),
+             "OK RAW CR0=%02X CR1=%02X MASK=%02X SR=%02X LTCB=%02X%02X%02X SPI_OK=%d\r\n",
+             raw.cr0, raw.cr1, raw.mask, raw.sr,
+             raw.ltcb[0], raw.ltcb[1], raw.ltcb[2], (int)raw.ok);
+    send_str(tpcb, buf);
+    return;
+  }
+
+  if (strncmp(line, "ACK FAULT", 9) == 0) {
+    Heater_AckFault();
+    snprintf(buf, sizeof(buf), "OK ACK STATE=%s\r\n", Heater_ModeName(Heater_GetMode()));
     send_str(tpcb, buf);
     return;
   }
