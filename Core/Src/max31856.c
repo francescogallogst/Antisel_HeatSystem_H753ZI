@@ -1,253 +1,172 @@
 /**
- ******************************************************************************
- * @file    max31856.c
- * @brief   Driver MAX31856 (termocoppia-to-digital) — interfaccia SPI1 (CN7).
- ******************************************************************************
+ * MAX31856 library to be used with STM32 HAL
+ *
+ * Author: Can Kocak
+ *
+ * BSD license, all text here must be included in any redistribution.
+ *
  */
+
 #include "max31856.h"
-#include "main.h"
-#include "spi.h"
-#include "iwdg.h"
 
-#define MAX31856_SPI_TIMEOUT_MS 50U
+#define MAX31856_SPI_TIMEOUT 50U
 
-/* Registri (indirizzo di lettura; per la scrittura si somma 0x80) */
-#define REG_CR0    0x00U
-#define REG_CR1    0x01U
-#define REG_MASK   0x02U
-#define REG_LTCBH  0x0CU /* temperatura linearizzata, 3 byte: MSB/mid/LSB */
-#define REG_SR     0x0FU /* fault status, sola lettura */
+void max31856_init(max31856_t *max31856)
+{
+    /*
+     * Default:
+     * - Thermocouple type: K
+     * - Number of samples for average: 1
+     * - Cold junction temperature offset: 0
+     */
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr1.val = max31856_read_register(max31856, MAX31856_CR1);
 
-/* Bit del registro CR0 */
-#define CR0_AUTOCONVERT  0x80U
-#define CR0_OCFAULT0     0x10U /* OCFAULT[1:0]=01: rilevamento open-circuit
-                                 * attivo, per ingresso senza cap RC esterno */
-#define CR0_FAULT_CLEAR  0x02U
-#define CR0_FILTER_50HZ  0x01U
-
-static MAX31856_Cal_t cal = {
-    .tc_type = MAX31856_TC_TYPE_T,
-    .filter_50hz = false,
-};
-
-void MAX31856_SetCal(const MAX31856_Cal_t *c) {
-  if (c != NULL) {
-    cal = *c;
-  }
+    // Enable all faults
+    max31856->mask.val = 0;
+    max31856_write_register(max31856, MAX31856_MASK, max31856->mask.val);
 }
 
-const MAX31856_Cal_t *MAX31856_GetCal(void) { return &cal; }
-
-/* ── Interfaccia hardware ───────────────────────────────────────────────── */
-/* CS sul pin PD14 (CN7). */
-static void cs_low(void) {
-  HAL_GPIO_WritePin(MAX31856_CS_GPIO_Port, MAX31856_CS_Pin, GPIO_PIN_RESET);
+void max31856_set_conversion_mode(max31856_t *max31856, max31856_conversion_mode_t conv_mode)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr0.bits.conv_mode = conv_mode;
+    max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
 }
 
-static void cs_high(void) {
-  HAL_GPIO_WritePin(MAX31856_CS_GPIO_Port, MAX31856_CS_Pin, GPIO_PIN_SET);
-}
-
-static bool write_reg(uint8_t addr, uint8_t data) {
-  uint8_t tx[2] = {(uint8_t)(0x80U | addr), data};
-  cs_low();
-  HAL_StatusTypeDef st =
-      HAL_SPI_Transmit(&hspi1, tx, sizeof(tx), MAX31856_SPI_TIMEOUT_MS);
-  cs_high();
-  return st == HAL_OK;
-}
-
-/* Indirizzo e dati in un'unica HAL_SPI_TransmitReceive(): due chiamate HAL
- * separate (Transmit poi Receive) con CS tenuto basso in mezzo lasciavano
- * al periferico SPI di H7 (v3.5) una finestra per re-inizializzare lo stato
- * delle linee tra le due transazioni (MasterKeepIOState=DISABLE), iniettando
- * un glitch che corrompeva l'indirizzo del registro visto dal chip — stesso
- * sintomo osservato identico su SPI3 e SPI1, quindi non un problema di
- * cablaggio. Un'unica transazione elimina il gap alla radice. */
-static bool read_regs(uint8_t addr, uint8_t *buf, uint16_t len) {
-  uint8_t tx[1U + 8U] = {0};
-  uint8_t rx[1U + 8U] = {0};
-  if (len > 8U) {
-    return false;
-  }
-  tx[0] = (uint8_t)(addr & 0x7FU);
-  cs_low();
-  HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(
-      &hspi1, tx, rx, (uint16_t)(1U + len), MAX31856_SPI_TIMEOUT_MS);
-  cs_high();
-  if (st == HAL_OK) {
-    for (uint16_t i = 0U; i < len; i++) {
-      buf[i] = rx[1U + i];
+void max31856_trigger_one_shot(max31856_t *max31856)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    if (max31856->cr0.bits.conv_mode == CR0_CONV_OFF) {
+        max31856->cr0.bits.one_shot_mode = 1;
+        max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
+        max31856->cr0.bits.one_shot_mode = 0;
     }
-  }
-  return st == HAL_OK;
 }
 
-static uint8_t cr0_byte(void) {
-  uint8_t cr0 = CR0_AUTOCONVERT | CR0_OCFAULT0;
-  if (cal.filter_50hz) {
-    cr0 |= CR0_FILTER_50HZ;
-  }
-  return cr0;
+void max31856_set_noise_filter(max31856_t *max31856, max31856_noise_filter_t noise_filter)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr0.bits.noise_filter = noise_filter;
+    max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
 }
 
-#define MAX31856_INIT_RETRIES 5U
+void max31856_set_cold_junction_enable(max31856_t *max31856, max31856_cj_enable cj_enable)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr0.bits.cj_enable = cj_enable;
+    max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
+}
 
-/* Scrive un registro e verifica con una rilettura; ritenta in caso di
- * mismatch. Osservato in campo (GET RAW) che una delle tre scritture
- * consecutive di MAX31856_Init() puo' "scivolare" su un registro adiacente
- * (es. il valore atteso in CR1 ritrovato in MASK) — sintomo di un glitch
- * elettrico/di timing sul bus SPI3, non di un bug nella sequenza logica.
- * HAL_Delay(1) fra un tentativo e l'altro per lasciar assestare il bus. */
-static bool write_reg_verified(uint8_t addr, uint8_t data) {
-  for (uint32_t attempt = 0U; attempt < MAX31856_INIT_RETRIES; attempt++) {
-    uint8_t readback = 0xFFU;
-    if (write_reg(addr, data) && read_regs(addr, &readback, 1U) &&
-        readback == data) {
-      return true;
+void max31856_set_thermocouple_type(max31856_t *max31856, max31856_thermocouple_t therm_typ)
+{
+    max31856->cr1.val = max31856_read_register(max31856, MAX31856_CR1);
+    max31856->cr1.bits.thermo_type = therm_typ;
+    max31856_write_register(max31856, MAX31856_CR1, max31856->cr1.val);
+}
+
+void max31856_set_average_samples(max31856_t *max31856, max31856_sampling_t samples)
+{
+    max31856->cr1.val = max31856_read_register(max31856, MAX31856_CR1);
+    max31856->cr1.bits.conv_avg_mode = samples;
+    max31856_write_register(max31856, MAX31856_CR1, max31856->cr1.val);
+}
+
+float max31856_read_TC_temp(max31856_t *max31856)
+{
+    uint8_t raw_val[3] = {};
+    max31856_read_nregisters(max31856, MAX31856_LTCBH, raw_val, 3);
+    int32_t raw_val_signed = ((int32_t)raw_val[0] << 16) | ((int32_t)raw_val[1] << 8) | raw_val[2];
+    if (raw_val_signed & 0x800000) {
+        raw_val_signed |= 0xFF000000;
     }
-    HAL_Delay(1U);
-  }
-  return false;
+    // First 5 bits aren't unused
+    raw_val_signed >>= 5;
+    return (float)raw_val_signed * 0.0078125f;
 }
 
-bool MAX31856_Init(void) {
-  cs_high();
-  HAL_Delay(1U); /* dwell minimo prima della prima transazione */
-  bool ok = write_reg_verified(REG_CR0, cr0_byte());
-  /* CR1: averaging a 1 campione (bit7:4 = 0) + selezione tipo termocoppia */
-  ok = write_reg_verified(REG_CR1, (uint8_t)(cal.tc_type & 0x0FU)) && ok;
-  /* Smaschera tutti i fault nel registro SR (default di reset li maschera) */
-  ok = write_reg_verified(REG_MASK, 0x00U) && ok;
-  return ok;
+float max31856_read_CJ_temp(max31856_t *max31856)
+{
+    uint8_t raw_val[2] = {};
+    max31856_read_nregisters(max31856, MAX31856_CJTH, raw_val, 2);
+    int16_t raw_val_signed = (raw_val[0] << 8) | raw_val[1];
+    return raw_val_signed / 256.0;
 }
 
-bool MAX31856_ReadTempC(float *temp_c_out) {
-  uint8_t buf[3];
-  if (!read_regs(REG_LTCBH, buf, sizeof(buf))) {
-    return false;
-  }
-  int32_t raw = ((int32_t)buf[0] << 16) | ((int32_t)buf[1] << 8) | buf[2];
-  if ((raw & 0x800000) != 0) {
-    raw |= (int32_t)0xFF000000U; /* sign-extend il campo a 24 bit */
-  }
-  raw >>= 5; /* i 5 bit meno significativi sono riservati (sempre 0) */
-  if (temp_c_out != NULL) {
-    *temp_c_out = (float)raw * 0.0078125f; /* risoluzione 1/128 C per LSB */
-  }
-  return true;
+void max31856_set_fault_mode(max31856_t *max31856, max31856_fault_mode_t fault_mode)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr0.bits.fault_mode = fault_mode;
+    max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
 }
 
-bool MAX31856_ReadFaultStatus(MAX31856_Fault_t *fault_out) {
-  uint8_t raw;
-  if (!read_regs(REG_SR, &raw, 1U)) {
-    return false;
-  }
-  if (fault_out != NULL) {
-    fault_out->raw = raw;
-    fault_out->cj_range = (raw & 0x80U) != 0U;
-    fault_out->tc_range = (raw & 0x40U) != 0U;
-    fault_out->cj_high = (raw & 0x20U) != 0U;
-    fault_out->cj_low = (raw & 0x10U) != 0U;
-    fault_out->tc_high = (raw & 0x08U) != 0U;
-    fault_out->tc_low = (raw & 0x04U) != 0U;
-    fault_out->overvoltage_undervoltage = (raw & 0x02U) != 0U;
-    fault_out->open_circuit = (raw & 0x01U) != 0U;
-  }
-  return true;
+void max31856_set_open_circuit_fault_detection(max31856_t *max31856, max31856_oc_fault_t oc_fault)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    max31856->cr0.bits.oc_fault_enable = oc_fault;
+    max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
 }
 
-bool MAX31856_ClearFault(void) {
-  return write_reg(REG_CR0, cr0_byte() | CR0_FAULT_CLEAR);
+void max31856_read_fault(max31856_t *max31856)
+{
+    max31856->sr.val = max31856_read_register(max31856, MAX31856_SR);
 }
 
-void MAX31856_ReadGpioLevels(MAX31856_GpioLevels_t *out) {
-  if (out == NULL) {
-    return;
-  }
-  out->cs = HAL_GPIO_ReadPin(MAX31856_CS_GPIO_Port, MAX31856_CS_Pin) == GPIO_PIN_SET;
-  out->sck = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5) == GPIO_PIN_SET;
-  out->miso = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET;
-  out->mosi = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_SET;
-}
-
-void MAX31856_TestSckToggle(void) {
-  GPIO_InitTypeDef gpio = {0};
-  gpio.Pin = GPIO_PIN_5;
-  gpio.Mode = GPIO_MODE_OUTPUT_PP;
-  gpio.Pull = GPIO_NOPULL;
-  gpio.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &gpio);
-
-  uint32_t until = HAL_GetTick() + 2000U; /* 2 s: visibile anche senza trigger */
-  while (HAL_GetTick() < until) {
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-    HAL_IWDG_Refresh(&hiwdg1); /* IWDG1 ~2s: senza refresh qui l'MCU si resetta a meta' test */
-    HAL_Delay(1); /* ~500 Hz */
-  }
-
-  /* ripristina la funzione SPI1 AF5 */
-  gpio.Mode = GPIO_MODE_AF_PP;
-  gpio.Alternate = GPIO_AF5_SPI1;
-  HAL_GPIO_Init(GPIOA, &gpio);
-}
-
-void MAX31856_TestMosiToggle(void) {
-  GPIO_InitTypeDef gpio = {0};
-  gpio.Pin = GPIO_PIN_5;
-  gpio.Mode = GPIO_MODE_OUTPUT_PP;
-  gpio.Pull = GPIO_NOPULL;
-  gpio.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &gpio);
-
-  uint32_t until = HAL_GetTick() + 2000U;
-  while (HAL_GetTick() < until) {
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-    HAL_IWDG_Refresh(&hiwdg1);
-    HAL_Delay(1);
-  }
-
-  gpio.Mode = GPIO_MODE_AF_PP;
-  gpio.Alternate = GPIO_AF5_SPI1;
-  HAL_GPIO_Init(GPIOB, &gpio);
-}
-
-uint32_t MAX31856_TestLoopback(void) {
-  GPIO_InitTypeDef gpio = {0};
-  gpio.Pin = GPIO_PIN_5;
-  gpio.Mode = GPIO_MODE_OUTPUT_PP;
-  gpio.Pull = GPIO_NOPULL;
-  gpio.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &gpio); /* MOSI come uscita manuale */
-
-  uint32_t matches = 0U;
-  for (uint32_t i = 0U; i < MAX31856_LOOPBACK_SAMPLES; i++) {
-    GPIO_PinState forced = (i % 2U == 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, forced);
-    HAL_Delay(2);
-    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == forced) {
-      matches++;
+void max31856_clear_fault_status(max31856_t *max31856)
+{
+    max31856->cr0.val = max31856_read_register(max31856, MAX31856_CR0);
+    if (max31856->cr0.bits.fault_mode == CR0_FAULT_INTERRUPT_MODE) {
+        max31856->cr0.bits.fault_clear = 1;
+        max31856_write_register(max31856, MAX31856_CR0, max31856->cr0.val);
+        max31856->cr0.bits.fault_clear = 0;
     }
-    HAL_IWDG_Refresh(&hiwdg1);
-  }
-
-  /* ripristina la funzione SPI1 AF5 su MOSI */
-  gpio.Mode = GPIO_MODE_AF_PP;
-  gpio.Alternate = GPIO_AF5_SPI1;
-  HAL_GPIO_Init(GPIOB, &gpio);
-
-  return matches;
 }
 
-bool MAX31856_ReadRaw(MAX31856_RawDump_t *out) {
-  if (out == NULL) {
-    return false;
-  }
-  bool ok = read_regs(REG_CR0, &out->cr0, 1U);
-  ok = read_regs(REG_CR1, &out->cr1, 1U) && ok;
-  ok = read_regs(REG_MASK, &out->mask, 1U) && ok;
-  ok = read_regs(REG_SR, &out->sr, 1U) && ok;
-  ok = read_regs(REG_LTCBH, out->ltcb, sizeof(out->ltcb)) && ok;
-  out->ok = ok;
-  return ok;
+void max31856_write_register(max31856_t *max31856, uint8_t reg_addr, uint8_t reg_val)
+{
+    uint8_t tx[2] = { (uint8_t)(reg_addr | 0x80), reg_val };
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(max31856->spi_handle, tx, 2, MAX31856_SPI_TIMEOUT);
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_SET);
+}
+
+void max31856_write_nregisters(max31856_t *max31856, uint8_t reg_addr, uint8_t *buff, uint16_t len)
+{
+    uint8_t tx[16] = {0};
+    if (len > 15) return;
+    tx[0] = reg_addr | 0x80;
+    for(uint16_t i=0; i<len; i++) {
+        tx[i+1] = buff[i];
+    }
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(max31856->spi_handle, tx, len + 1, MAX31856_SPI_TIMEOUT);
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_SET);
+}
+
+uint8_t max31856_read_register(max31856_t *max31856, uint8_t reg_addr)
+{
+    uint8_t tx[2] = { reg_addr & 0x7F, 0x00 };
+    uint8_t rx[2] = { 0 };
+
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(max31856->spi_handle, tx, rx, 2, MAX31856_SPI_TIMEOUT);
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_SET);
+
+    return rx[1];
+}
+
+void max31856_read_nregisters(max31856_t *max31856, uint8_t reg_addr, uint8_t *buff, uint16_t len)
+{
+    uint8_t tx[16] = {0};
+    uint8_t rx[16] = {0};
+    if (len > 15) return;
+    tx[0] = reg_addr & 0x7F;
+    
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(max31856->spi_handle, tx, rx, len + 1, MAX31856_SPI_TIMEOUT);
+    HAL_GPIO_WritePin(max31856->cs_pin.gpio_port, max31856->cs_pin.gpio_pin, GPIO_PIN_SET);
+    
+    for(uint16_t i=0; i<len; i++) {
+        buff[i] = rx[i+1];
+    }
 }

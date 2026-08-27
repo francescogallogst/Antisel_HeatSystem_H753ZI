@@ -15,6 +15,7 @@ typedef enum {
   HEATER_OFF = 0,
   HEATER_MANUAL,
   HEATER_AUTO,
+  HEATER_AUTOTUNE,
   HEATER_FAULT,
 } HeaterMode_t;
 
@@ -38,9 +39,11 @@ void Heater_Service(void);
 
 /* Comandi (aggiornano anche il timestamp del watchdog di disconnessione) */
 void Heater_SetSetpointC(float setpoint_c);
+void Heater_StartAutotune(float setpoint_c);
 void Heater_SetManualDuty(float duty_pct);
 void Heater_Off(void);
 void Heater_AckFault(void);
+void Heater_KeepAlive(void);
 
 /* Stato per il protocollo RTU/PID */
 float Heater_LastTempC(void);

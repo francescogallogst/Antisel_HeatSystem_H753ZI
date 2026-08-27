@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern max31856_t hmax;
+
 static struct tcp_pcb *server_pcb;
 static struct tcp_pcb *client_pcb;
 
@@ -31,6 +33,7 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
   char buf[96];
 
   if (strncmp(line, "GET TEMP", 8) == 0) {
+    Heater_KeepAlive();
     if (Heater_RtdFresh()) {
       float t = Heater_LastTempC();
       int t_i = (int)t;
@@ -47,6 +50,7 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
   }
 
   if (strncmp(line, "GET PID", 7) == 0) {
+    Heater_KeepAlive();
     float pwm = Heater_DutyPct();
     int p_i = (int)pwm;
     int p_f = (int)(((pwm - (float)p_i) * 10.0f));
@@ -66,45 +70,48 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
     return;
   }
 
+  if (strncmp(line, "SET AUTOTUNE_C", 14) == 0) {
+    float sp = (float)atof(line + 14);
+    Heater_StartAutotune(sp);
+    int s_i = (int)sp;
+    int s_f = (int)(((sp - (float)s_i) * 10.0f));
+    snprintf(buf, sizeof(buf), "OK AUTOTUNE_C=%d.%d\r\n", s_i, s_f);
+    send_str(tpcb, buf);
+    return;
+  }
+
   if (strncmp(line, "GET RAW", 7) == 0) {
-    MAX31856_RawDump_t raw;
-    MAX31856_ReadRaw(&raw);
+    uint8_t cr0  = max31856_read_register(&hmax, MAX31856_CR0);
+    uint8_t cr1  = max31856_read_register(&hmax, MAX31856_CR1);
+    uint8_t mask = max31856_read_register(&hmax, MAX31856_MASK);
+    uint8_t sr   = max31856_read_register(&hmax, MAX31856_SR);
+    uint8_t ltcb[3];
+    max31856_read_nregisters(&hmax, MAX31856_LTCBH, ltcb, 3);
+    
     snprintf(buf, sizeof(buf),
-             "OK RAW CR0=%02X CR1=%02X MASK=%02X SR=%02X LTCB=%02X%02X%02X SPI_OK=%d\r\n",
-             raw.cr0, raw.cr1, raw.mask, raw.sr,
-             raw.ltcb[0], raw.ltcb[1], raw.ltcb[2], (int)raw.ok);
+             "OK RAW CR0=%02X CR1=%02X MASK=%02X SR=%02X LTCB=%02X%02X%02X\r\n",
+             cr0, cr1, mask, sr, ltcb[0], ltcb[1], ltcb[2]);
     send_str(tpcb, buf);
     return;
   }
 
   if (strncmp(line, "GET GPIO", 8) == 0) {
-    MAX31856_GpioLevels_t lvl;
-    MAX31856_ReadGpioLevels(&lvl);
-    snprintf(buf, sizeof(buf), "OK GPIO CS=%d SCK=%d MISO=%d MOSI=%d\r\n",
-             (int)lvl.cs, (int)lvl.sck, (int)lvl.miso, (int)lvl.mosi);
-    send_str(tpcb, buf);
+    send_str(tpcb, "ERR UNSUPPORTED_BY_NEW_DRIVER\r\n");
     return;
   }
 
   if (strncmp(line, "TEST SCK", 8) == 0) {
-    send_str(tpcb, "OK TEST_SCK_START\r\n");
-    MAX31856_TestSckToggle(); /* bloccante ~2 s, solo per bring-up manuale */
-    send_str(tpcb, "OK TEST_SCK_DONE\r\n");
+    send_str(tpcb, "ERR UNSUPPORTED_BY_NEW_DRIVER\r\n");
     return;
   }
 
   if (strncmp(line, "TEST MOSI", 9) == 0) {
-    send_str(tpcb, "OK TEST_MOSI_START\r\n");
-    MAX31856_TestMosiToggle();
-    send_str(tpcb, "OK TEST_MOSI_DONE\r\n");
+    send_str(tpcb, "ERR UNSUPPORTED_BY_NEW_DRIVER\r\n");
     return;
   }
 
   if (strncmp(line, "TEST LOOP", 9) == 0) {
-    uint32_t matches = MAX31856_TestLoopback();
-    snprintf(buf, sizeof(buf), "OK LOOP MATCH=%lu/%u\r\n",
-             (unsigned long)matches, MAX31856_LOOPBACK_SAMPLES);
-    send_str(tpcb, buf);
+    send_str(tpcb, "ERR UNSUPPORTED_BY_NEW_DRIVER\r\n");
     return;
   }
 
