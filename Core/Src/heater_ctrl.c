@@ -63,12 +63,14 @@ static void write_duty(float pct) {
     pct = 100.0f;
   }
   duty_pct = pct;
-  uint32_t period = htim4.Init.Period; /* es. 65535 */
-  uint32_t counts = (uint32_t)((pct / 100.0f) * (float)period);
-  /* clamp esplicito: CCR e' un registro a 16 bit, un valore di 'period+1'
-   * (100% "esatto") lo farebbe traboccare a 0, cioe' 0% invece di 100% */
-  if (counts > period) {
-    counts = period;
+  uint32_t period = htim4.Init.Period;
+  uint32_t counts = (uint32_t)((pct / 100.0f) * (float)(period + 1));
+  
+  if (counts > period + 1) {
+    counts = period + 1;
+  }
+  if (counts > 65535) {
+    counts = 65535;
   }
   __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, counts);
 }
@@ -148,16 +150,17 @@ static void poll_rtd(void) {
 static void run_pid(void) {
   uint32_t now = HAL_GetTick();
   float dt_s = (float)(now - last_pid_tick) / 1000.0f;
-  if (dt_s < 0.05f) {
-    return; /* aggiorna al massimo a ~20 Hz */
+  if (dt_s < 0.25f) {
+    return; /* aggiorna a 4 Hz, sincrono col MAX31856 per evitare spike sulla derivata */
   }
   last_pid_tick = now;
 
   float error = setpoint_c - latest_temp_c;
   pid_integral += error * dt_s;
 
-  /* Anti-windup: limita il contributo integrale da solo a +-50% di duty */
-  float i_max = (cal.ki > 0.0f) ? (50.0f / cal.ki) : 0.0f;
+  /* Anti-windup: limita il contributo integrale a +-100% di duty 
+     (prima era 50%, impediva di mantenere temp se richiedeva >50% potenza) */
+  float i_max = (cal.ki > 0.0f) ? (100.0f / cal.ki) : 0.0f;
   if (pid_integral > i_max) {
     pid_integral = i_max;
   } else if (pid_integral < -i_max) {
