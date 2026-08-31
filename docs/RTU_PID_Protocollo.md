@@ -79,6 +79,8 @@ reale — vedi i commenti in `heater_ctrl.c`:
 | Parametro | Default attuale | Dove |
 |---|---|---|
 | Guadagni PID (Kp, Ki, Kd) | 5.0 / 0.05 / 0.0 | `heater_ctrl.c`, `cal` |
+| PID Anti-windup (Max Integrale) | 100% (aggiornato) | `heater_ctrl.c` (modificato da 50% a 100% per azzerare l'errore a regime) |
+| Frequenza PWM (Time Proportioning) | 1 Hz | `tim.c`, `MX_TIM4_Init` (adatto per SSR zero-crossing, evita spegnimenti spuri) |
 | Soglia di cutoff termico | 90.0 °C | `heater_ctrl.c`, `cal.cutoff_c` |
 | Timeout watchdog disconnessione | 5000 ms | `heater_ctrl.c`, `cal.watchdog_ms` |
 | Staleness RTD | 2000 ms | `heater_ctrl.c`, `cal.rtd_stale_ms` |
