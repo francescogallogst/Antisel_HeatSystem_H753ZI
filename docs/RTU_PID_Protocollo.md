@@ -50,16 +50,17 @@ pannello RTU/PID.
 
 Implementata in `heater_ctrl.c`, non richiede comandi dalla GUI:
 
-- **Safety check** ad ogni ciclo: se il MAX31856 segnala un fault (incluso
-  open-circuit, rilevamento attivato via `OCFAULT[1:0]` in `cr0_byte()`),
-  se la temperatura supera `cutoff_c` (default 90.0 °C, placeholder), o se
-  la lettura RTD è stantia, il PWM viene forzato a 0% e lo stato passa a
-  `FAULT`. `ACK FAULT` riporta a `OFF` solo se nessuna di queste condizioni
-  è più vera al ciclo successivo.
+- **Safety check**: se il MAX31856 segnala un fault (incluso open-circuit, 
+  attivato via `OCFAULT`), se la temperatura supera `cutoff_c` (default 90.0 °C), 
+  o se la lettura RTD è stantia, il sistema rileva un potenziale guasto.
+  Per prevenire falsi positivi dovuti a transienti EMI generati dalla 
+  commutazione del Relè a Stato Solido (SSR), il controllo è **rate-limited a 4 Hz** 
+  e richiede che l'errore persista per **3 cicli consecutivi (750 ms)**. Solo allora 
+  il PWM viene forzato a 0% e lo stato passa a `FAULT`. `ACK FAULT` riporta a `OFF` 
+  solo se l'errore fisico è risolto.
 - **Watchdog di disconnessione**: se in modo `AUTO` non arriva nessun
-  comando (`SET SETPOINT_C`) entro `watchdog_ms` (default 5000 ms,
-  placeholder) il riscaldatore torna a `OFF` da solo, senza bisogno di un
-  comando esplicito dalla GUI.
+  comando (`SET SETPOINT_C` o polling tramite `GET TEMP`/`GET PID`) entro `watchdog_ms` (default 5000 ms)
+  il riscaldatore torna a `OFF` da solo.
 
 ## Estensioni previste (non ancora implementate)
 
