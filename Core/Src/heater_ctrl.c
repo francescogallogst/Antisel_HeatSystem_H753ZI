@@ -77,12 +77,25 @@ void Heater_Init(void) {
   hmax.spi_handle = &hspi1;
   hmax.cs_pin.gpio_port = MAX31856_CS_GPIO_Port;
   hmax.cs_pin.gpio_pin = MAX31856_CS_Pin;
-  max31856_init(&hmax);
-  max31856_set_thermocouple_type(&hmax, CR1_TC_TYPE_T);
-  max31856_set_noise_filter(&hmax, CR0_FILTER_OUT_50Hz);
-  max31856_set_conversion_mode(&hmax, CR0_CONV_CONTINUOUS);
-  max31856_set_open_circuit_fault_detection(&hmax, CR0_OC_DETECT_ENABLED_R_LESS_5k);
-  max31856_set_fault_mode(&hmax, CR0_FAULT_INTERRUPT_MODE);
+
+  uint8_t retries = 10;
+  do {
+    /* Direct configuration to avoid read-modify-write corruption 
+     * CR0 = 0x95: Continuous (1), OC_FAULT R<5k (01), CJ Enabled (0), Fault Int (1), 50Hz (1)
+     * CR1 = 0x07: 1 sample avg, Type T thermocouple
+     * MASK = 0x00: All faults enabled
+     */
+    max31856_write_register(&hmax, MAX31856_CR0, 0x95);
+    max31856_write_register(&hmax, MAX31856_CR1, 0x07);
+    max31856_write_register(&hmax, MAX31856_MASK, 0x00);
+    
+    /* Read back CR0 to verify CONV_CONTINUOUS (bit 7) was correctly set */
+    uint8_t cr0 = max31856_read_register(&hmax, MAX31856_CR0);
+    if (cr0 == 0x95) {
+      break;
+    }
+    HAL_Delay(10);
+  } while (--retries > 0);
 
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   write_duty(0.0f); /* riscaldatore spento finche' non arriva un comando */

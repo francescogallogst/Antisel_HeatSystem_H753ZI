@@ -41,7 +41,11 @@ static void handle_command(struct tcp_pcb *tpcb, char *line) {
       if (t_f < 0) {
         t_f = -t_f;
       }
-      snprintf(buf, sizeof(buf), "OK TEMP=%d.%d\r\n", t_i, t_f);
+      if (t < 0.0f && t_i == 0) {
+        snprintf(buf, sizeof(buf), "OK TEMP=-0.%d\r\n", t_f);
+      } else {
+        snprintf(buf, sizeof(buf), "OK TEMP=%d.%d\r\n", t_i, t_f);
+      }
     } else {
       snprintf(buf, sizeof(buf), "ERR RTD_STALE\r\n");
     }
