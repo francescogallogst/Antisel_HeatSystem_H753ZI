@@ -6,9 +6,9 @@
  */
 #include "heater_ctrl.h"
 #include "main.h"
+#include "max31856.h"
 #include "spi.h"
 #include "tim.h"
-#include "max31856.h"
 
 max31856_t hmax;
 
@@ -19,8 +19,8 @@ static Heater_Cal_t cal = {
     .kp = 5.0f,
     .ki = 0.05f,
     .kd = 0.0f,
-    .cutoff_c = 90.0f,      /* margine sopra il target ~85 C citato in §1 */
-    .watchdog_ms = 5000U,   /* multiplo del poll GUI (RTU_POLL_S = 1 s) */
+    .cutoff_c = 90.0f,    /* margine sopra il target ~85 C citato in §1 */
+    .watchdog_ms = 5000U, /* multiplo del poll GUI (RTU_POLL_S = 1 s) */
     .rtd_stale_ms = 2000U,
 };
 
@@ -65,7 +65,7 @@ static void write_duty(float pct) {
   duty_pct = pct;
   uint32_t period = htim4.Init.Period;
   uint32_t counts = (uint32_t)((pct / 100.0f) * (float)(period + 1));
-  
+
   if (counts > period + 1) {
     counts = period + 1;
   }
@@ -82,15 +82,15 @@ void Heater_Init(void) {
 
   uint8_t retries = 10;
   do {
-    /* Direct configuration to avoid read-modify-write corruption 
-     * CR0 = 0x95: Continuous (1), OC_FAULT R<5k (01), CJ Enabled (0), Fault Int (1), 50Hz (1)
-     * CR1 = 0x07: 1 sample avg, Type T thermocouple
-     * MASK = 0x00: All faults enabled
+    /* Direct configuration to avoid read-modify-write corruption
+     * CR0 = 0x95: Continuous (1), OC_FAULT R<5k (01), CJ Enabled (0), Fault Int
+     * (1), 50Hz (1) CR1 = 0x07: 1 sample avg, Type T thermocouple MASK = 0x00:
+     * All faults enabled
      */
     max31856_write_register(&hmax, MAX31856_CR0, 0x95);
     max31856_write_register(&hmax, MAX31856_CR1, 0x07);
     max31856_write_register(&hmax, MAX31856_MASK, 0x00);
-    
+
     /* Read back CR0 to verify CONV_CONTINUOUS (bit 7) was correctly set */
     uint8_t cr0 = max31856_read_register(&hmax, MAX31856_CR0);
     if (cr0 == 0x95) {
@@ -116,21 +116,42 @@ static void enter_fault(void) {
  * lettura stantia -> forza PWM a 0% e latcha fault. Stessa filosofia
  * della protezione INA301 R-01 di AntiSEL: sicurezza locale al dispositivo,
  * non dipendente dalla GUI/rete. */
+static uint32_t last_safety_tick = 0;
+static uint8_t fault_count = 0;
+
 static bool safety_check(void) {
+  uint32_t now = HAL_GetTick();
+  if (now - last_safety_tick < 250U) {
+    return true; /* rate-limit a 4 Hz */
+  }
+  last_safety_tick = now;
+
+  bool has_fault = false;
+
   max31856_read_fault(&hmax);
   if (hmax.sr.val != 0U) {
     max31856_clear_fault_status(&hmax);
-    enter_fault();
-    return false;
+    has_fault = true;
   }
+
   if (!Heater_RtdFresh()) {
-    enter_fault();
-    return false;
+    has_fault = true;
   }
+
   if (latest_temp_c > cal.cutoff_c) {
-    enter_fault();
-    return false;
+    has_fault = true;
   }
+
+  if (has_fault) {
+    fault_count++;
+    if (fault_count >= 3) {
+      enter_fault();
+      return false;
+    }
+  } else {
+    fault_count = 0;
+  }
+
   return true;
 }
 
@@ -151,14 +172,15 @@ static void run_pid(void) {
   uint32_t now = HAL_GetTick();
   float dt_s = (float)(now - last_pid_tick) / 1000.0f;
   if (dt_s < 0.25f) {
-    return; /* aggiorna a 4 Hz, sincrono col MAX31856 per evitare spike sulla derivata */
+    return; /* aggiorna a 4 Hz, sincrono col MAX31856 per evitare spike sulla
+               derivata */
   }
   last_pid_tick = now;
 
   float error = setpoint_c - latest_temp_c;
   pid_integral += error * dt_s;
 
-  /* Anti-windup: limita il contributo integrale a +-100% di duty 
+  /* Anti-windup: limita il contributo integrale a +-100% di duty
      (prima era 50%, impediva di mantenere temp se richiedeva >50% potenza) */
   float i_max = (cal.ki > 0.0f) ? (100.0f / cal.ki) : 0.0f;
   if (pid_integral > i_max) {
@@ -184,63 +206,66 @@ static void run_autotune(void) {
   }
   last_pid_tick = now;
 
-  if (latest_temp_c > autotune_peak_high) autotune_peak_high = latest_temp_c;
-  if (latest_temp_c < autotune_peak_low) autotune_peak_low = latest_temp_c;
+  if (latest_temp_c > autotune_peak_high)
+    autotune_peak_high = latest_temp_c;
+  if (latest_temp_c < autotune_peak_low)
+    autotune_peak_low = latest_temp_c;
 
   switch (autotune_state) {
-    case 0: /* Riscaldamento iniziale fino al setpoint */
+  case 0: /* Riscaldamento iniziale fino al setpoint */
+    write_duty(100.0f);
+    if (latest_temp_c >= setpoint_c) {
+      autotune_state = 1;
+      autotune_peak_high = latest_temp_c;
+      autotune_peak_low = latest_temp_c;
+      write_duty(0.0f);
+    }
+    break;
+  case 1: /* Raffreddamento oltre il setpoint (inizio del primo ciclo utile) */
+    write_duty(0.0f);
+    if (latest_temp_c <= setpoint_c) {
+      autotune_state = 2;
+      autotune_t1 = now;
       write_duty(100.0f);
-      if (latest_temp_c >= setpoint_c) {
-        autotune_state = 1;
+    }
+    break;
+  case 2: /* Riscaldamento, primo mezzo ciclo */
+    write_duty(100.0f);
+    if (latest_temp_c >= setpoint_c) {
+      autotune_state = 3;
+      autotune_t2 = now;
+      write_duty(0.0f);
+    }
+    break;
+  case 3: /* Raffreddamento, fine ciclo completo */
+    write_duty(0.0f);
+    if (latest_temp_c <= setpoint_c) {
+      autotune_t3 = now;
+      autotune_cycles++;
+      if (autotune_cycles >= 3) {
+        /* Calcolo Ziegler-Nichols */
+        float a = (autotune_peak_high - autotune_peak_low) / 2.0f;
+        if (a < 0.1f)
+          a = 0.1f;
+        float pu = (float)(autotune_t3 - autotune_t1) / 1000.0f;
+        float ku = (4.0f * 50.0f) / (3.14159f * a);
+
+        cal.kp = 0.6f * ku;
+        cal.ki = 1.2f * ku / pu;
+        cal.kd = 0.075f * ku * pu;
+
+        /* Terminato, torna in OFF. I parametri restano in RAM */
+        Heater_Off();
+      } else {
+        /* Prossimo ciclo */
+        autotune_state = 2;
+        autotune_t1 = autotune_t3;
         autotune_peak_high = latest_temp_c;
         autotune_peak_low = latest_temp_c;
-        write_duty(0.0f);
-      }
-      break;
-    case 1: /* Raffreddamento oltre il setpoint (inizio del primo ciclo utile) */
-      write_duty(0.0f);
-      if (latest_temp_c <= setpoint_c) {
-        autotune_state = 2;
-        autotune_t1 = now;
         write_duty(100.0f);
       }
-      break;
-    case 2: /* Riscaldamento, primo mezzo ciclo */
-      write_duty(100.0f);
-      if (latest_temp_c >= setpoint_c) {
-        autotune_state = 3;
-        autotune_t2 = now;
-        write_duty(0.0f);
-      }
-      break;
-    case 3: /* Raffreddamento, fine ciclo completo */
-      write_duty(0.0f);
-      if (latest_temp_c <= setpoint_c) {
-        autotune_t3 = now;
-        autotune_cycles++;
-        if (autotune_cycles >= 3) {
-          /* Calcolo Ziegler-Nichols */
-          float a = (autotune_peak_high - autotune_peak_low) / 2.0f;
-          if (a < 0.1f) a = 0.1f;
-          float pu = (float)(autotune_t3 - autotune_t1) / 1000.0f;
-          float ku = (4.0f * 50.0f) / (3.14159f * a);
-
-          cal.kp = 0.6f * ku;
-          cal.ki = 1.2f * ku / pu;
-          cal.kd = 0.075f * ku * pu;
-
-          /* Terminato, torna in OFF. I parametri restano in RAM */
-          Heater_Off();
-        } else {
-          /* Prossimo ciclo */
-          autotune_state = 2;
-          autotune_t1 = autotune_t3;
-          autotune_peak_high = latest_temp_c;
-          autotune_peak_low = latest_temp_c;
-          write_duty(100.0f);
-        }
-      }
-      break;
+    }
+    break;
   }
 }
 
@@ -312,9 +337,7 @@ void Heater_AckFault(void) {
   last_command_tick = HAL_GetTick();
 }
 
-void Heater_KeepAlive(void) {
-  last_command_tick = HAL_GetTick();
-}
+void Heater_KeepAlive(void) { last_command_tick = HAL_GetTick(); }
 
 float Heater_LastTempC(void) { return latest_temp_c; }
 float Heater_DutyPct(void) { return duty_pct; }
@@ -322,12 +345,18 @@ HeaterMode_t Heater_GetMode(void) { return mode; }
 
 const char *Heater_ModeName(HeaterMode_t m) {
   switch (m) {
-  case HEATER_OFF: return "OFF";
-  case HEATER_MANUAL: return "MANUAL";
-  case HEATER_AUTO: return "AUTO";
-  case HEATER_AUTOTUNE: return "AUTOTUNE";
-  case HEATER_FAULT: return "FAULT";
-  default: return "?";
+  case HEATER_OFF:
+    return "OFF";
+  case HEATER_MANUAL:
+    return "MANUAL";
+  case HEATER_AUTO:
+    return "AUTO";
+  case HEATER_AUTOTUNE:
+    return "AUTOTUNE";
+  case HEATER_FAULT:
+    return "FAULT";
+  default:
+    return "?";
   }
 }
 
